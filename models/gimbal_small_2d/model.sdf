@@ -183,7 +183,7 @@
           <upper>3.1415926</upper>
         </limit>
       </axis>
-      <pose>0 0 0.02 0 0 0</pose>
+      <pose degrees='true'>0 0 0.02 0 0 0</pose>
     </joint>
   </model>
 </sdf>

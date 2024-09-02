@@ -120,5 +120,33 @@
       <pose degrees="true">0 0 0.195 0 0 90</pose>
     </include>
 
+    <model name="cylinder1">
+      <pose> 0 10 6 0 0 0</pose>
+      <static>true</static>
+      <link name="cylinder_link">
+        <collision name="cylinder_collision">
+          <geometry>
+            <cylinder>
+              <radius>3.0</radius>
+              <length>12.0</length>
+            </cylinder>
+          </geometry>
+        </collision>
+        <visual name="cylinder_visual">
+          <geometry>
+            <cylinder>
+              <radius>3.0</radius>
+              <length>12.0</length>
+            </cylinder>
+          </geometry>
+          <material>
+            <ambient>0.8 0.8 0.8 1</ambient>
+            <diffuse>0.8 0.8 0.8 1</diffuse>
+            <specular>1.0 1.0 1.0 1</specular>
+          </material>
+        </visual>
+      </link>
+    </model>
+
   </world>
 </sdf>

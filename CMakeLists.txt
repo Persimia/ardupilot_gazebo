@@ -54,6 +54,7 @@ endif()
 # --------------------------------------------------------------------------- #
 find_package(RapidJSON REQUIRED)
 find_package(OpenCV REQUIRED)
+find_package(MAVSDK REQUIRED)
 
 pkg_check_modules(GST REQUIRED gstreamer-1.0 gstreamer-app-1.0)
 
@@ -113,6 +114,19 @@ target_link_libraries(GstCameraPlugin PRIVATE
   ${GST_LINK_LIBRARIES}
 )
 
+add_library(MavlinkProximityPlugin
+  SHARED
+  src/MavlinkProximityPlugin.cc
+)
+target_include_directories(MavlinkProximityPlugin PRIVATE
+  include
+)
+
+target_link_libraries(MavlinkProximityPlugin PRIVATE
+  gz-sim${GZ_SIM_VER}::gz-sim${GZ_SIM_VER}
+  MAVSDK::mavsdk
+)
+
 # --------------------------------------------------------------------------- #
 # Install.
 
@@ -122,6 +136,7 @@ install(
   ParachutePlugin
   CameraZoomPlugin
   GstCameraPlugin
+  MavlinkProximityPlugin
   DESTINATION lib/${PROJECT_NAME}
 )
 

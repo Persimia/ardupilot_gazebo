@@ -121,7 +121,7 @@
         </geometry>
       </collision>
       <visual name='camera_viz'>
-        <pose>0 0 0.02 0 0 0</pose>
+        <pose degrees="true">0 0 0.02 0 0 30</pose>
         <geometry>
           <cylinder>
             <radius>0.025</radius>
@@ -172,18 +172,18 @@
       <sensor name='lidar' type='gpu_lidar'>
         <gz_frame_id>tilt_link</gz_frame_id>
         <index>1</index>
-        <pose>0 0 0.045 0 -0 0</pose>
+        <pose degrees="true">0 0 0.045 90 -90 0</pose>
         <always_on>1</always_on>
         <topic>lidar</topic>
-        <update_rate>10</update_rate>
+        <update_rate>5</update_rate>
         <visualize>1</visualize>
         <ray>
           <scan>
             <horizontal>
-              <samples>360</samples>
+              <samples>72</samples>
               <resolution>1</resolution>
-              <min_angle>-3.14159265</min_angle>
-              <max_angle>3.14159265</max_angle>
+              <min_angle>-0.6283185</min_angle>
+              <max_angle>0.6283185</max_angle>
             </horizontal>
             <vertical>
               <samples>1</samples>
@@ -194,7 +194,7 @@
           </scan>
           <range>
             <min>0.1</min>
-            <max>12</max>
+            <max>20</max>
             <resolution>0.05</resolution>
           </range>
           <noise>
@@ -203,6 +203,12 @@
             <stddev>0.01</stddev>
           </noise>
         </ray>
+
+        <plugin name="MavlinkProximityPlugin"
+            filename="MavlinkProximityPlugin">
+          <tcp_host>127.0.0.1</tcp_host>
+          <tcp_port>5762</tcp_port>
+        </plugin>
       </sensor>
 
     </link>
@@ -219,7 +225,7 @@
           <upper>3.1415926</upper>
         </limit>
       </axis>
-      <pose>0 0 0.02 0 0 0</pose>
+      <pose degrees='true'>0 0 0.02 0 0 0</pose>
     </joint>
    
   </model>

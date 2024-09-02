@@ -296,7 +296,7 @@
       <control channel="9">
         <jointName>gimbal::tilt_joint</jointName>
         <multiplier>-3.14159265</multiplier>
-        <offset>-0.75</offset>
+        <offset>-0.5</offset>
         <servo_min>1100</servo_min>
         <servo_max>1900</servo_max>
         <type>COMMAND</type>
