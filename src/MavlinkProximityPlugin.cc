@@ -3,6 +3,7 @@
 
 #include<iostream>
 #include<string>
+#include<vector>
 
 #include <gz/plugin/Register.hh>
 #include <gz/sim/Model.hh>
@@ -170,34 +171,45 @@ void MavlinkProximityPlugin::Impl::onData(const msgs::LaserScan &msg)
         gzmsg << "[ProximityPlugin] connected to autopilot" << std::endl;
         mav_found = true;
     }
-            
-    
-    uint16_t distances[72];
+    // Extract Message   
+    int N_pts = msg.ranges_size();
+    uint16_t min_range = uint16_t(msg.range_min()*100.0);
+    uint16_t max_range = uint16_t(msg.range_max()*100.0);
+    float angle_step = float(msg.angle_step()*57.2957795131);
 
-    if(msg.ranges_size() >= sizeof(distances)/sizeof(distances[0])){
-        for(int i = 0; i<72; i++){
-            distances[i] = int16_t(msg.ranges(i) * 100.0);
-        }
+    std::vector<uint16_t> distances;
+    distances.reserve(N_pts+72);
+
+    for(int i = 0; i<N_pts; i++){
+        distances.push_back(uint16_t(msg.ranges(i) * 100.0));
+    }
+    for(int i = 0; i<72; i++){
+        distances.push_back(UINT16_MAX);
     }
 
-    mav_stream->queue_message([&](MavlinkAddress mavlink_address, uint8_t channel) {
-        mavlink_message_t message;
-        mavlink_msg_obstacle_distance_pack(
-            mavlink_address.system_id,
-            mavlink_address.component_id,
-            &message,
-            this->sim_time,
-            MAV_DISTANCE_SENSOR_LASER, // Distance sensor type
-            distances,
-            0,
-            5,
-            2000,
-            1.0f,
-            -36.0f,
-            MAV_FRAME_BODY_FRD); // frame of reference
-        return message;
-    });
 
+    int index = 0;
+    while(index < N_pts){
+        float angle_start = float((msg.angle_min()*(N_pts - index) + msg.angle_max()*index)*57.2957795131)/float(N_pts);
+        mav_stream->queue_message([&](MavlinkAddress mavlink_address, uint8_t channel) {
+            mavlink_message_t message;
+            mavlink_msg_obstacle_distance_pack(
+                mavlink_address.system_id,
+                mavlink_address.component_id,
+                &message,
+                this->sim_time,
+                MAV_DISTANCE_SENSOR_LASER, // Distance sensor type
+                &distances[index],
+                0,
+                min_range,
+                max_range,
+                angle_step,
+                angle_start,
+                MAV_FRAME_BODY_FRD); // frame of reference
+            return message;
+        });
+        index += 72;
+    }
 }
 
 
