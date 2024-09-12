@@ -13,6 +13,7 @@
 #include <gz/sim/components/Name.hh>
 #include <gz/sim/components/Sensor.hh>
 #include <gz/transport/Node.hh>
+#include <gz/msgs/laserscan.pb.h>
 
 #include <mavsdk/mavsdk.h>
 #include <mavsdk/mavlink/common/mavlink.h>
