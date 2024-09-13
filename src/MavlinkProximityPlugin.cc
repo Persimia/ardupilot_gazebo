@@ -90,6 +90,7 @@ void MavlinkProximityPlugin::Configure(const Entity &_entity,
     {
         impl->tcpPort = _sdf->Get<int>("tcp_port");
     }
+    impl->tcpHost.append(":");
 
     gzmsg << "ProximityPlugin: streaming video to "
           << impl->tcpHost << ":"
@@ -127,12 +128,12 @@ void MavlinkProximityPlugin::Configure(const Entity &_entity,
         {
             impl->hush_timer=0;
             mavsdk::ConnectionResult connection_result = impl->mavlink.add_any_connection(
-                std::string("tcp://") + impl->tcpHost.append(":") + std::to_string(impl->tcpPort),
+                std::string("tcp://") + impl->tcpHost + std::to_string(impl->tcpPort),
                 mavsdk::ForwardingOption::ForwardingOff
             );
             if(connection_result != mavsdk::ConnectionResult::Success){
                 
-                gzwarn<< "[ProximityPlugin]: Mavlink Connection Failed, tcp port not open" << std::endl;
+                gzwarn<< "[ProximityPlugin]: Mavlink Connection Failed, " << std::string("tcp://") + impl->tcpHost + std::to_string(impl->tcpPort) << std::endl;
 
                 return;
             }
