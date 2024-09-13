@@ -13,6 +13,7 @@
 #include <gz/sim/components/Name.hh>
 #include <gz/sim/components/Sensor.hh>
 #include <gz/transport/Node.hh>
+#include <gz/msgs/laserscan.pb.h>
 
 #include <mavsdk/mavsdk.h>
 #include <mavsdk/mavlink/common/mavlink.h>
@@ -125,12 +126,10 @@ void MavlinkProximityPlugin::Configure(const Entity &_entity,
         if(impl->hush_timer++ >1000)
         {
             impl->hush_timer=0;
-            mavsdk::ConnectionResult connection_result = impl->mavlink.add_tcp_connection(
-                impl->tcpHost,
-                impl->tcpPort,
+            mavsdk::ConnectionResult connection_result = impl->mavlink.add_any_connection(
+                std::string("tcp://") + impl->tcpHost.append(":") + std::to_string(impl->tcpPort),
                 mavsdk::ForwardingOption::ForwardingOff
             );
-
             if(connection_result != mavsdk::ConnectionResult::Success){
                 
                 gzwarn<< "[ProximityPlugin]: Mavlink Connection Failed, tcp port not open" << std::endl;
