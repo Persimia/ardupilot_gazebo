@@ -136,7 +136,7 @@ namespace systems
     private: std::atomic<bool> detachRequested{false};
 
     /// \brief Whether attachment has been requested
-    private: std::atomic<bool> attachRequested{true}; //TODO make false in real thingie
+    private: std::atomic<bool> attachRequested{false};
 
     /// \brief Whether child entity is attached
     private: std::atomic<bool> isAttached{false};
@@ -164,6 +164,26 @@ namespace systems
 
     /// \brief Whether there is contact made between the two links
     private: bool touching{false};
+
+    /// \brief direction to apply the suction force
+    private: gz::msgs::Vector3d touching_direction;
+
+    /// \brief Time when we last sent the message
+    private: std::chrono::duration<double> lastMsgTime{0};
+
+    /// \brief Time between messages
+    private: std::chrono::duration<double> msgGap{3};
+
+    /// \brief Time when stopped touching
+    private: std::chrono::duration<double> noTouchStart{0};
+
+    /// \brief Time before we are considered detached (s)
+    private: std::chrono::duration<double> noTouchDuration{5};
+
+    private: bool timeStarted{false};
+
+    private: float suction_force{100};
+
   };
   }
 }

@@ -37,6 +37,8 @@
 #include "gz/sim/components/ContactSensorData.hh"
 #include "gz/sim/components/Collision.hh"
 
+#include "gz/sim/components/ExternalWorldWrenchCmd.hh"
+
 #include "SuctionPlugin.hh"
 
 using namespace gz;
@@ -95,6 +97,16 @@ void SuctionPlugin::Configure(const Entity &_entity,
     else
     {
         gzerr << "'child_link' is a required parameter for SuctionPlugin."
+                            "Failed to initialize.\n";
+        return;
+    }
+    if (_sdf->HasElement("suction_force"))
+    {
+        this->suction_force = _sdf->Get<std::float_t>("suction_force");
+    }
+    else
+    {
+        gzerr << "'suction_force' is a required parameter for SuctionPlugin."
                             "Failed to initialize.\n";
         return;
     }
@@ -240,7 +252,7 @@ void SuctionPlugin::AddTargetEntities(const EntityComponentManager &_ecm, const 
 
 //////////////////////////////////////////////////
 void SuctionPlugin::PreUpdate(
-    const UpdateInfo &/*_info*/,
+    const UpdateInfo &_info,
     EntityComponentManager &_ecm)
 {
     GZ_PROFILE("SuctionPlugin::PreUpdate");
@@ -276,82 +288,116 @@ void SuctionPlugin::PreUpdate(
             }
         }
 
+        // Check if the component already exists, and create or update it
+        if (!_ecm.Component<components::ExternalWorldWrenchCmd>(this->parentLinkEntity))
+        {
+            _ecm.CreateComponent(
+                    this->parentLinkEntity,
+                    components::ExternalWorldWrenchCmd());
+            gzdbg << "Creating force" << std::endl;
+        }
         this->validConfig = true;
     }
 
     // only allow attaching if child entity is detached
     if (!this->isAttached)
     {
-        // return if attach is not requested.
-        if (!this->attachRequested){
-            return;
-        }
-        // return if not in contact
-        if (!this->touching){
-            // gzerr << "Not in contact!" << std::endl;
-            return;
-        }
-        // Look for the child model and link
-        Entity modelEntity{kNullEntity};
+        // Only attach when requested
+        if (this->attachRequested){
+            // Only attach when models are in contact
+            if (this->touching){
+                // Look for the child model and link
+                Entity modelEntity{kNullEntity};
+                if ("__model__" == this->childModelName)
+                {
+                    modelEntity = this->model.Entity();
+                }
+                else
+                {
+                    modelEntity = _ecm.EntityByComponents(
+                            components::Model(), components::Name(this->childModelName));
+                }
+                if (kNullEntity != modelEntity)
+                {
+                    this->childLinkEntity = _ecm.EntityByComponents(
+                            components::Link(), components::ParentEntity(modelEntity),
+                            components::Name(this->childLinkName));
 
-        if ("__model__" == this->childModelName)
-        {
-            modelEntity = this->model.Entity();
-        }
-        else
-        {
-            modelEntity = _ecm.EntityByComponents(
-                    components::Model(), components::Name(this->childModelName));
-        }
-        if (kNullEntity != modelEntity)
-        {
-            this->childLinkEntity = _ecm.EntityByComponents(
-                    components::Link(), components::ParentEntity(modelEntity),
-                    components::Name(this->childLinkName));
-
-            if (kNullEntity != this->childLinkEntity)
-            {
-                // Attach the models
-                // We do this by creating a detachable joint entity.
-                this->detachableJointEntity = _ecm.CreateEntity();
-
-                _ecm.CreateComponent(
-                        this->detachableJointEntity,
-                        components::DetachableJoint({this->parentLinkEntity,
-                                                                                 this->childLinkEntity, "fixed"}));
-                this->attachRequested = false;
-                this->isAttached = true;
-                this->PublishJointState(this->isAttached);
-                gzdbg << "Attaching entity: " << this->detachableJointEntity
-                             << std::endl;
+                    if (kNullEntity != this->childLinkEntity)
+                    {
+                        this->attachRequested = false;
+                        this->isAttached = true;
+                        this->PublishJointState(this->isAttached);
+                    }
+                    else
+                    {
+                        gzwarn << "Child Link " << this->childLinkName
+                                        << " could not be found.\n";
+                    }
+                }
+                else if (!this->suppressChildWarning)
+                {
+                    gzwarn << "Child Model " << this->childModelName
+                                    << " could not be found.\n";
+                }
             }
-            else
-            {
-                gzwarn << "Child Link " << this->childLinkName
-                                << " could not be found.\n";
-            }
-        }
-        else if (!this->suppressChildWarning)
-        {
-            gzwarn << "Child Model " << this->childModelName
-                            << " could not be found.\n";
         }
     }
 
- // only allow detaching if child entity is attached
+    // Detach when detach is requested
     if (this->isAttached)
     {
-        if (this->detachRequested && (kNullEntity != this->detachableJointEntity))
+        // 
+        if (this->detachRequested)
         {
             // Detach the models
-            gzdbg << "Removing entity: " << this->detachableJointEntity << std::endl;
-            _ecm.RequestRemoveEntity(this->detachableJointEntity);
-            this->detachableJointEntity = kNullEntity;
             this->detachRequested = false;
             this->isAttached = false;
             this->PublishJointState(this->isAttached);
         }
     }
+
+    // If we are attached, exert a force
+    if (this->isAttached)
+    {
+        gz::msgs::Vector3d force;
+        force.set_x(this->touching_direction.x()*-this->suction_force);
+        force.set_y(this->touching_direction.y()*-this->suction_force);
+        force.set_z(this->touching_direction.z()*-this->suction_force);
+
+        // Update the force and torque if the component already exists
+        auto *wrenchCmd = _ecm.Component<components::ExternalWorldWrenchCmd>(this->parentLinkEntity);
+        if (wrenchCmd)
+        {
+            wrenchCmd->Data().mutable_force()->CopyFrom(force);
+
+            if ((std::chrono::duration_cast<std::chrono::duration<double>>(_info.simTime) - 
+                this->lastMsgTime) > this->msgGap) 
+            {
+                gzdbg << "Force vector | x: " << force.x() 
+                << " y: " << force.y()
+                << " z: " << force.z() << std::endl;
+                this->lastMsgTime = std::chrono::duration_cast<std::chrono::duration<double>>(_info.simTime);
+            }
+        }
+    }
+
+    // if (this->isAttached)
+    // {
+    //     if (!this->touching){
+    //         if (!this->timeStarted){
+    //             this->noTouchStart = std::chrono::duration_cast<std::chrono::duration<double>>(_info.simTime);
+    //             this->timeStarted = true;
+    //         }
+    //         if ((std::chrono::duration_cast<std::chrono::duration<double>>(_info.simTime) - 
+    //                 this->noTouchStart) > this->noTouchDuration) 
+    //         {
+    //             gzerr << "Timeout... detaching" << std::endl;
+    //             this->isAttached = false;
+    //             this->timeStarted = false;
+    //         }
+    //     }
+    // }  
 }
 
 //////////////////////////////////////////////////
@@ -394,6 +440,7 @@ void SuctionPlugin::PostUpdate(const UpdateInfo &_info, const EntityComponentMan
                 if (col1Target || col2Target)
                 {
                     this->touching = true;
+                    this->touching_direction = **contact.normal().data();
                 }
             }
         }
@@ -403,6 +450,7 @@ void SuctionPlugin::PostUpdate(const UpdateInfo &_info, const EntityComponentMan
 //////////////////////////////////////////////////
 void SuctionPlugin::OnDetachRequest(const msgs::Empty &)
 {
+    gzerr << "Detach primed!" << std::endl;
     if (!this->isAttached){
         gzdbg << "Already detached" << std::endl;
         return;
