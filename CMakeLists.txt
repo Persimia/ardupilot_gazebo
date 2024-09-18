@@ -127,6 +127,18 @@ target_link_libraries(MavlinkProximityPlugin PRIVATE
   MAVSDK::mavsdk
 )
 
+add_library(SuctionPlugin
+  SHARED
+  src/SuctionPlugin.cc
+)
+target_include_directories(SuctionPlugin PRIVATE
+  include
+)
+
+target_link_libraries(SuctionPlugin PRIVATE
+  gz-sim${GZ_SIM_VER}::gz-sim${GZ_SIM_VER}
+)
+
 # --------------------------------------------------------------------------- #
 # Install.
 
@@ -137,6 +149,7 @@ install(
   CameraZoomPlugin
   GstCameraPlugin
   MavlinkProximityPlugin
+  SuctionPlugin
   DESTINATION lib/${PROJECT_NAME}
 )
 
