@@ -79,27 +79,6 @@ void SuctionPlugin::Configure(const Entity &_entity,
         return;
     }
 
-    if (_sdf->HasElement("child_model"))
-    {
-        this->childModelName = _sdf->Get<std::string>("child_model");
-    }
-    else
-    {
-        gzerr << "'child_model' is a required parameter for SuctionPlugin."
-                            "Failed to initialize.\n";
-        return;
-    }
-
-    if (_sdf->HasElement("child_link"))
-    {
-        this->childLinkName = _sdf->Get<std::string>("child_link");
-    }
-    else
-    {
-        gzerr << "'child_link' is a required parameter for SuctionPlugin."
-                            "Failed to initialize.\n";
-        return;
-    }
     if (_sdf->HasElement("suction_force"))
     {
         this->suction_force = _sdf->Get<std::float_t>("suction_force");
@@ -198,11 +177,7 @@ void SuctionPlugin::Configure(const Entity &_entity,
     if (_sdf->HasElement("output_topic"))
     {
         outputTopics.push_back(_sdf->Get<std::string>("output_topic"));
-    }
-
-    outputTopics.push_back("/model/" + this->childModelName +
-            "/detachable_joint/state");
-
+    } 
     this->outputTopic = validTopic(outputTopics);
     if (this->outputTopic.empty())
     {
@@ -220,34 +195,6 @@ void SuctionPlugin::Configure(const Entity &_entity,
                             << std::endl;
         return;
     }
-
-    // Supress Child Warning
-    this->suppressChildWarning =
-            _sdf->Get<bool>("suppress_child_warning", this->suppressChildWarning)
-                    .first;
-
-    this->targetName = this->childModelName;
-}
-
-void SuctionPlugin::AddTargetEntities(const EntityComponentManager &_ecm, const std::vector<Entity> &_entities)
-{
-    if (_entities.empty())
-        return;
-
-    for (Entity entity : _entities)
-    {
-        // The target name can be a substring of the desired collision name so we
-        // have to iterate through all collisions and check if their scoped name has
-        // this substring
-        std::string name = scopedName(entity, _ecm);
-        if (name.find(this->targetName) != std::string::npos)
-        {
-            this->targetEntities.push_back(entity);
-        }
-    }
-
-    // Sort so that we can do binary search later on.
-    std::sort(this->targetEntities.begin(), this->targetEntities.end());
 }
 
 //////////////////////////////////////////////////
@@ -266,8 +213,6 @@ void SuctionPlugin::PreUpdate(
                     potentialEntities.push_back(_entity);
                     return true;
                 });
-
-        this->AddTargetEntities(_ecm, potentialEntities);
 
         // Create a list of collision entities that have been marked as contact
         // sensors in this model. These are collisions that have a ContactSensorData
@@ -306,40 +251,9 @@ void SuctionPlugin::PreUpdate(
         if (this->attachRequested){
             // Only attach when models are in contact
             if (this->touching){
-                // Look for the child model and link
-                Entity modelEntity{kNullEntity};
-                if ("__model__" == this->childModelName)
-                {
-                    modelEntity = this->model.Entity();
-                }
-                else
-                {
-                    modelEntity = _ecm.EntityByComponents(
-                            components::Model(), components::Name(this->childModelName));
-                }
-                if (kNullEntity != modelEntity)
-                {
-                    this->childLinkEntity = _ecm.EntityByComponents(
-                            components::Link(), components::ParentEntity(modelEntity),
-                            components::Name(this->childLinkName));
-
-                    if (kNullEntity != this->childLinkEntity)
-                    {
-                        this->attachRequested = false;
-                        this->isAttached = true;
-                        this->PublishJointState(this->isAttached);
-                    }
-                    else
-                    {
-                        gzwarn << "Child Link " << this->childLinkName
-                                        << " could not be found.\n";
-                    }
-                }
-                else if (!this->suppressChildWarning)
-                {
-                    gzwarn << "Child Model " << this->childModelName
-                                    << " could not be found.\n";
-                }
+                this->attachRequested = false;
+                this->isAttached = true;
+                this->PublishJointState(this->isAttached);
             }
         }
     }
@@ -381,23 +295,6 @@ void SuctionPlugin::PreUpdate(
             }
         }
     }
-
-    // if (this->isAttached)
-    // {
-    //     if (!this->touching){
-    //         if (!this->timeStarted){
-    //             this->noTouchStart = std::chrono::duration_cast<std::chrono::duration<double>>(_info.simTime);
-    //             this->timeStarted = true;
-    //         }
-    //         if ((std::chrono::duration_cast<std::chrono::duration<double>>(_info.simTime) - 
-    //                 this->noTouchStart) > this->noTouchDuration) 
-    //         {
-    //             gzerr << "Timeout... detaching" << std::endl;
-    //             this->isAttached = false;
-    //             this->timeStarted = false;
-    //         }
-    //     }
-    // }  
 }
 
 //////////////////////////////////////////////////
@@ -428,20 +325,24 @@ void SuctionPlugin::PostUpdate(const UpdateInfo &_info, const EntityComponentMan
         auto *contacts = _ecm.Component<components::ContactSensorData>(colEntity);
         if (contacts)
         {
+            
             // Check if the contacts include one of the target entities.
             for (const auto &contact : contacts->Data().contact())
             {
-                bool col1Target = std::binary_search(this->targetEntities.begin(),
-                        this->targetEntities.end(),
-                        contact.collision1().id());
-                bool col2Target = std::binary_search(this->targetEntities.begin(),
-                        this->targetEntities.end(),
-                        contact.collision2().id());
-                if (col1Target || col2Target)
-                {
-                    this->touching = true;
-                    this->touching_direction = **contact.normal().data();
-                }
+                // gzerr << "Contact 1: " << contact.collision1().name() << std::endl;
+                // gzerr << "Contact 2: " << contact.collision2().name() << std::endl;
+                // bool col1Target = std::binary_search(this->targetEntities.begin(),
+                //         this->targetEntities.end(),
+                //         contact.collision1().id());
+                // bool col2Target = std::binary_search(this->targetEntities.begin(),
+                //         this->targetEntities.end(),
+                //         contact.collision2().id());
+                // if (col1Target || col2Target)
+                // {
+                this->touching = true;
+                this->touching_direction = **contact.normal().data();
+                // }
+                break;
             }
         }
     }

@@ -105,12 +105,6 @@ namespace systems
     /// \brief The model associated with this system.
     private: Model model;
 
-    /// \brief Name of child model
-    private: std::string childModelName;
-
-    /// \brief Name of attachment link in the child model
-    private: std::string childLinkName;
-
     /// \brief Topic to be used for detaching connections
     private: std::string detachTopic;
 
@@ -120,17 +114,8 @@ namespace systems
     /// \brief Topic to be used for publishing detached state
     private: std::string outputTopic;
 
-    /// \brief Whether to suppress warning about missing child model.
-    private: bool suppressChildWarning{false};
-
     /// \brief Entity of attachment link in the parent model
     private: Entity parentLinkEntity{kNullEntity};
-
-    /// \brief Entity of attachment link in the child model
-    private: Entity childLinkEntity{kNullEntity};
-
-    /// \brief Entity of the detachable joint created by this system
-    private: Entity detachableJointEntity{kNullEntity};
 
     /// \brief Whether detachment has been requested
     private: std::atomic<bool> detachRequested{false};
@@ -149,18 +134,10 @@ namespace systems
                 const gz::sim::UpdateInfo &_info,
                 const gz::sim::EntityComponentManager &_ecm) override;
 
-    public: void AddTargetEntities(const EntityComponentManager &_ecm, const std::vector<Entity> &_entities);
-
     /// \brief Collision entities that have been designated as contact sensors.
     /// These will be checked against the targetEntities to establish whether this
     /// model is touching the targetscollisionEntities;
     public: std::vector<Entity> collisionEntities;
-
-    /// \brief Name of target. Kept for debug printing
-    public: std::string targetName;
-
-    /// \brief Target collisions which this model should be touching.
-    public: std::vector<Entity> targetEntities;
 
     /// \brief Whether there is contact made between the two links
     private: bool touching{false};
