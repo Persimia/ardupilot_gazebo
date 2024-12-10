@@ -163,7 +163,9 @@ void SuctionPlugin::Configure(const Entity &_entity,
                     return;
                 }
                 this->attachRequested = true;
+                this->PublishLegCommand(this->leg_extended_pos); // publish leg position command
                 gzerr << "Attach primed!" << std::endl;
+
             });
 
     if (!this->node.Subscribe(this->attachTopic, msgCb))
@@ -195,6 +197,48 @@ void SuctionPlugin::Configure(const Entity &_entity,
                             << std::endl;
         return;
     }
+
+    // Setup leg topic
+    std::vector<std::string> legTopics;
+    if (_sdf->HasElement("leg_topic"))
+    {
+        legTopics.push_back(_sdf->Get<std::string>("leg_topic"));
+        gzdbg << "SDF Leg topic is: " << _sdf->Get<std::string>("leg_topic") << std::endl;
+        if (_sdf->HasElement("leg_retracted_pos")) {
+            this->leg_retracted_pos = _sdf->Get<std::double_t>("leg_retracted_pos");
+            this->use_leg = true;
+        }
+        else {
+            gzerr << "Need leg_retracted_pos field when using leg_topic" << std::endl;
+            return;
+        }
+        if (_sdf->HasElement("leg_extended_pos")) {
+            this->leg_extended_pos = _sdf->Get<std::double_t>("leg_extended_pos");
+            this->use_leg = true;
+        }
+        else {
+            gzerr << "Need leg_extended_pos field when using leg_topic" << std::endl;
+            return;
+        }
+    } 
+    this->legTopic = validTopic(legTopics);
+    if (this->legTopic.empty())
+    {
+        gzwarn << "No valid leg topics could be found. Not using leg publisher\n";
+    }
+    else {
+        gzdbg << "Leg topic is: " << this->legTopic << std::endl;
+
+        // Setup publisher for leg topic
+        this->legPub = this->node.Advertise<gz::msgs::Double>(
+                this->legTopic);
+        if (!this->legPub)
+        {
+            gzerr << "Error advertising topic [" << this->legTopic << "]" << std::endl;
+            return;
+        }
+    }
+    
 }
 
 //////////////////////////////////////////////////
@@ -312,6 +356,15 @@ void SuctionPlugin::PublishJointState(bool attached)
     this->outputPub.Publish(detachedStateMsg);
 }
 
+void SuctionPlugin::PublishLegCommand(double cmd)
+{
+    if (!this->use_leg) {return;}
+    gz::msgs::Double legCommandMsg;
+
+    legCommandMsg.set_data(cmd);
+    this->legPub.Publish(legCommandMsg);
+}
+
 void SuctionPlugin::PostUpdate(const UpdateInfo &_info, const EntityComponentManager &_ecm)
 {
     this->touching = false;
@@ -352,6 +405,7 @@ void SuctionPlugin::PostUpdate(const UpdateInfo &_info, const EntityComponentMan
 void SuctionPlugin::OnDetachRequest(const msgs::Empty &)
 {
     gzerr << "Detach primed!" << std::endl;
+    this->PublishLegCommand(this->leg_retracted_pos); // publish leg position command
     if (!this->isAttached){
         gzdbg << "Already detached" << std::endl;
         return;

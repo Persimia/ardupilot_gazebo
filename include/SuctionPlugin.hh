@@ -96,8 +96,14 @@ namespace systems
     /// \brief A publisher to send state of the detachment
     private: transport::Node::Publisher outputPub;
 
+    /// \brief A publisher to send command to the leg
+    private: transport::Node::Publisher legPub;
+
     /// \brief Helper function to publish the state of the detachment
     private: void PublishJointState(bool attached);
+
+    /// \brief Helper function to publish the command to the leg
+    private: void PublishLegCommand(double cmd);
 
     /// \brief Callback for detach request topic
     private: void OnDetachRequest(const msgs::Empty &_msg);
@@ -113,6 +119,9 @@ namespace systems
 
     /// \brief Topic to be used for publishing detached state
     private: std::string outputTopic;
+
+    /// \brief Topic to be used for publishing leg commands
+    private: std::string legTopic;
 
     /// \brief Entity of attachment link in the parent model
     private: Entity parentLinkEntity{kNullEntity};
@@ -160,6 +169,12 @@ namespace systems
     private: bool timeStarted{false};
 
     private: float suction_force{100};
+
+    private: bool use_leg{false};
+
+    private: double leg_extended_pos{0};
+
+    private: double leg_retracted_pos{0};
 
   };
   }
