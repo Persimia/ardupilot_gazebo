@@ -70,6 +70,134 @@ namespace systems
   /// will not print a warning message if a child model does not exist yet.
   /// Otherwise, a warning message is printed. Defaults to false.
 
+class SuctionHandler
+{
+public:
+    SuctionHandler(Entity _parentLink, double _suctionForce, double _suctionDelay)
+        : parentLink(_parentLink), suctionForce(_suctionForce), suctionDelay(_suctionDelay),
+          isAttached(false), isTouching(false), contactStartTime(0), msgPeriod_s(INFINITY), lastMsgTime(0),
+          noAttach(false), noDetach(false) {}
+
+    void Initialize(EntityComponentManager &_ecm)
+    {
+        std::vector<Entity> potentialEntities;
+        _ecm.Each<components::Collision>(
+        [&](const Entity &_entity, const components::Collision *) -> bool
+        {
+            potentialEntities.push_back(_entity);
+            return true;
+        });
+
+        auto linkCollisions = _ecm.ChildrenByComponents(this->parentLink, components::Collision());
+        for (const Entity colEntity : linkCollisions)
+        {
+            if (_ecm.EntityHasComponentType(colEntity, components::ContactSensorData::typeId))
+            {
+                this->collisionEntities.push_back(colEntity);
+                gzdbg << "Found collision entity." << std::endl;
+            }
+        }
+
+        if (!_ecm.Component<components::ExternalWorldWrenchCmd>(this->parentLink))
+        {
+            _ecm.CreateComponent(this->parentLink, components::ExternalWorldWrenchCmd());
+            gzdbg << "Creating force component for parent link entity." << std::endl;
+        }
+    }
+
+    void UpdateTouchingState(const EntityComponentManager &_ecm)
+    {
+        this->isTouching = false;
+        for (const auto &colEntity : this->collisionEntities)
+        {
+            auto *contacts = _ecm.Component<components::ContactSensorData>(colEntity);
+            if (contacts)
+            {
+                for (const auto &contact : contacts->Data().contact())
+                {
+
+                    this->isTouching = true;
+                    this->touchingDirection = **contact.normal().data();
+                }
+            }
+        }
+        
+    }
+
+    void Attach(const std::chrono::duration<double> &simTime)
+    {
+        if (!this->isAttached && this->isTouching)
+        {
+            this->isAttached = true;
+            this->contactStartTime = simTime;
+            gzdbg << "Attachment successful at time: " << simTime.count() << std::endl;
+        }
+    }
+
+    void Detach()
+    {
+        if (this->isAttached)
+        {
+            this->isAttached = false;
+            gzdbg << "Detach successful." << std::endl;
+        }
+    }
+
+    void ApplyForce(EntityComponentManager &_ecm, const std::chrono::duration<double> &simTime)
+    {
+        if ((
+                this->isAttached 
+                && (simTime - this->contactStartTime).count() > this->suctionDelay
+                && !(this->noAttach)
+            )||(
+                this->isTouching && this->noDetach
+            )
+        )
+        {
+            auto *wrenchCmd = _ecm.Component<components::ExternalWorldWrenchCmd>(this->parentLink);
+            if (wrenchCmd)
+            {
+                gz::msgs::Vector3d force;
+                force.set_x(this->touchingDirection.x() * -this->suctionForce);
+                force.set_y(this->touchingDirection.y() * -this->suctionForce);
+                force.set_z(this->touchingDirection.z() * -this->suctionForce);
+                wrenchCmd->Data().mutable_force()->CopyFrom(force);
+
+                if ((simTime - this->lastMsgTime).count() > this->msgPeriod_s || (this->lastMsgTime.count() == 0)){
+                    gzdbg << "Applying force: ["
+                      << force.x() << ", "
+                      << force.y() << ", "
+                      << force.z() << "]" << std::endl;
+                      this->lastMsgTime = simTime;
+                } 
+            }
+        }
+    }
+
+    bool IsAttached() const { return this->isAttached; }
+    bool IsTouching() const { return this->isTouching; }
+    void disableAttach() { this->noAttach = true; }
+    void disableDetach() { this->noDetach = true; }
+    void clearFailures() {
+        this->noAttach = false;
+        this->noDetach = false;
+    }
+
+private:
+    Entity parentLink;
+    double suctionForce;
+    double suctionDelay;
+    bool isAttached;
+    bool isTouching;
+    bool noAttach;
+    bool noDetach;
+    gz::msgs::Vector3d  touchingDirection;
+    std::chrono::duration<double> contactStartTime;
+    std::chrono::duration<double> lastMsgTime;
+    double msgPeriod_s;
+    std::vector<Entity> collisionEntities;
+};
+
   class SuctionPlugin
       : public System,
         public ISystemConfigure,
@@ -111,29 +239,24 @@ namespace systems
     /// \brief The model associated with this system.
     private: Model model;
 
-    /// \brief Topic to be used for detaching connections
+    /// \brief Topics for attach, detach, leg, and failure topics
     private: std::string detachTopic;
-
-    /// \brief Topic to be used for re-attaching connections
     private: std::string attachTopic;
-
-    /// \brief Topic to be used for publishing detached state
     private: std::string outputTopic;
-
-    /// \brief Topic to be used for publishing leg commands
     private: std::string legTopic;
+    private: std::string failureTopic;
 
     /// \brief Entity of attachment link in the parent model
     private: Entity parentLinkEntity{kNullEntity};
+
+    /// \brief Entity of attachment link in the parent model
+    private: Entity parentLinkEntity2{kNullEntity};
 
     /// \brief Whether detachment has been requested
     private: std::atomic<bool> detachRequested{false};
 
     /// \brief Whether attachment has been requested
     private: std::atomic<bool> attachRequested{false};
-
-    /// \brief Whether child entity is attached
-    private: std::atomic<bool> isAttached{false};
 
     /// \brief Whether all parameters are valid and the system can proceed
     private: bool validConfig{false};
@@ -143,32 +266,7 @@ namespace systems
                 const gz::sim::UpdateInfo &_info,
                 const gz::sim::EntityComponentManager &_ecm) override;
 
-    /// \brief Collision entities that have been designated as contact sensors.
-    /// These will be checked against the targetEntities to establish whether this
-    /// model is touching the targetscollisionEntities;
-    public: std::vector<Entity> collisionEntities;
-
-    /// \brief Whether there is contact made between the two links
-    private: bool touching{false};
-
-    /// \brief direction to apply the suction force
-    private: gz::msgs::Vector3d touching_direction;
-
-    /// \brief Time when we last sent the message
-    private: std::chrono::duration<double> lastMsgTime{0};
-
-    /// \brief Time between messages
-    private: std::chrono::duration<double> msgGap{3};
-
-    /// \brief Time when stopped touching
-    private: std::chrono::duration<double> noTouchStart{0};
-
-    /// \brief Time before we are considered detached (s)
-    private: std::chrono::duration<double> noTouchDuration{5};
-
-    private: bool timeStarted{false};
-
-    private: float suction_force{100};
+    private: std::string findNumNextToKeyword(std::string &receivedMessage, const std::string &keyword);
 
     private: bool use_leg{false};
 
@@ -176,10 +274,20 @@ namespace systems
 
     private: double leg_retracted_pos{0};
 
-  };
+    private: std::vector<SuctionHandler>suctionHandlers;
+
+    private: bool _allAttached;
+
+    const std::string no_attach_keyword = "noattach";
+    const std::string no_detach_keyword = "nodetach";
+    // const std::string clear_faults_keyword = "clear";
+    };
   }
 }
 }
 }
+
+
+
 
 #endif

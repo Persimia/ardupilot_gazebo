@@ -45,6 +45,10 @@ using namespace gz;
 using namespace sim;
 using namespace systems;
 
+
+/////////////////////////////////////////////////
+
+
 /////////////////////////////////////////////////
 void SuctionPlugin::Configure(const Entity &_entity,
                              const std::shared_ptr<const sdf::Element> &_sdf,
@@ -59,35 +63,61 @@ void SuctionPlugin::Configure(const Entity &_entity,
         return;
     }
 
-    if (_sdf->HasElement("parent_link"))
+    int index = 1;  // Start with 1 for parent_link1
+    while (true)
     {
-        auto parentLinkName = _sdf->Get<std::string>("parent_link");
-        this->parentLinkEntity = this->model.LinkByName(_ecm, parentLinkName);
-        if (kNullEntity == this->parentLinkEntity)
+        // Construct tag names dynamically
+        std::string parentLinkTag = "parent_link" + std::to_string(index);
+        std::string suctionForceTag = "suction_force" + std::to_string(index);
+        std::string suctionDelayTag = "suction_delay" + std::to_string(index);
+
+        // Check if the parent_link element exists
+        if (!_sdf->HasElement(parentLinkTag))
         {
-            gzerr << "Link with name " << parentLinkName
-                         << " not found in model " << this->model.Name(_ecm)
-                         << ". Make sure the parameter 'parent_link' has the "
-                         << "correct value. Failed to initialize.\n";
+            // If the element doesn't exist, break the loop (stop parsing)
+            break;
+        }
+
+        // Get the parent link name
+        std::string parentLinkName = _sdf->Get<std::string>(parentLinkTag);
+
+        // Resolve the parent link entity
+        Entity parentLinkEntity = this->model.LinkByName(_ecm, parentLinkName);
+        if (kNullEntity == parentLinkEntity)
+        {
+            gzerr << "Link with name [" << parentLinkName
+                << "] not found in model [" << this->model.Name(_ecm)
+                << "]. Ensure 'parent_link' has the correct value.\n";
             return;
         }
-    }
-    else
-    {
-        gzerr << "'parent_link' is a required parameter for SuctionPlugin. "
-                            "Failed to initialize.\n";
-        return;
-    }
 
-    if (_sdf->HasElement("suction_force"))
-    {
-        this->suction_force = _sdf->Get<std::float_t>("suction_force");
-    }
-    else
-    {
-        gzerr << "'suction_force' is a required parameter for SuctionPlugin."
-                            "Failed to initialize.\n";
-        return;
+        // Check if the suction_force element exists
+        if (!_sdf->HasElement(suctionForceTag))
+        {
+            gzerr << "Missing <" << suctionForceTag << "> for parent link [" << parentLinkName
+                << "]. Aborting initialization.\n";
+            return;
+        }
+
+        // Check if the suction_force element exists
+        if (!_sdf->HasElement(suctionDelayTag))
+        {
+            gzerr << "Missing <" << suctionDelayTag << "> for parent link [" << parentLinkName
+                << "]. Aborting initialization.\n";
+            return;
+        }
+
+        // Get the suction force value
+        double suctionForce = _sdf->Get<double>(suctionForceTag);
+        double suctionDelay = _sdf->Get<double>(suctionDelayTag);
+
+        // Add this handler to the list
+        this->suctionHandlers.emplace_back(parentLinkEntity, suctionForce, suctionDelay);
+        gzdbg << "Created SuctionHandler for link [" << parentLinkName
+            << "] with force [" << suctionForce << "].\n";
+
+        // Increment index to process the next set of elements
+        index++;
     }
 
     // Setup detach topic
@@ -95,32 +125,6 @@ void SuctionPlugin::Configure(const Entity &_entity,
     if (_sdf->HasElement("detach_topic"))
     {
         detachTopics.push_back(_sdf->Get<std::string>("detach_topic"));
-    }
-    detachTopics.push_back("/model/" + this->model.Name(_ecm) +
-            "/detachable_joint/detach");
-
-    if (_sdf->HasElement("topic"))
-    {
-        if (_sdf->HasElement("detach_topic"))
-        {
-            if (_sdf->Get<std::string>("topic") !=
-                    _sdf->Get<std::string>("detach_topic"))
-            {
-                gzerr << "<topic> and <detach_topic> tags have different contents. "
-                                 "Please verify the correct string and use <detach_topic>."
-                            << std::endl;
-            }
-            else
-            {
-                gzdbg << "Ignoring <topic> tag and using <detach_topic> tag."
-                            << std::endl;
-            }
-        }
-        else
-        {
-            detachTopics.insert(detachTopics.begin(),
-                                                    _sdf->Get<std::string>("topic"));
-        }
     }
 
     this->detachTopic = validTopic(detachTopics);
@@ -144,8 +148,6 @@ void SuctionPlugin::Configure(const Entity &_entity,
     {
         attachTopics.push_back(_sdf->Get<std::string>("attach_topic"));
     }
-    attachTopics.push_back("/model/" + this->model.Name(_ecm) +
-            "/detachable_joint/attach");
     this->attachTopic = validTopic(attachTopics);
     if (this->attachTopic.empty())
     {
@@ -158,8 +160,8 @@ void SuctionPlugin::Configure(const Entity &_entity,
     auto msgCb = std::function<void(const transport::ProtoMsg &)>(
             [this](const auto &)
             {
-                if (this->isAttached){
-                    gzdbg << "Already attached" << std::endl;
+                if (this->attachRequested){
+                    gzdbg << "Attach already primed!" << std::endl;
                     return;
                 }
                 this->attachRequested = true;
@@ -203,7 +205,6 @@ void SuctionPlugin::Configure(const Entity &_entity,
     if (_sdf->HasElement("leg_topic"))
     {
         legTopics.push_back(_sdf->Get<std::string>("leg_topic"));
-        gzdbg << "SDF Leg topic is: " << _sdf->Get<std::string>("leg_topic") << std::endl;
         if (_sdf->HasElement("leg_retracted_pos")) {
             this->leg_retracted_pos = _sdf->Get<std::double_t>("leg_retracted_pos");
             this->use_leg = true;
@@ -238,7 +239,90 @@ void SuctionPlugin::Configure(const Entity &_entity,
             return;
         }
     }
+
+    // Setup failure topic
+    std::vector<std::string> failureTopics;
+    if (_sdf->HasElement("failure_topic"))
+    {
+        failureTopics.push_back(_sdf->Get<std::string>("failure_topic"));
+    }
+
+    this->failureTopic = validTopic(failureTopics);
+    if (this->failureTopic.empty())
+    {
+        gzerr << "No valid failure topics for SuctionPlugin could be found.\n";
+        return;
+    }
+    gzdbg << "failure topic is: " << this->failureTopic << std::endl;
+
+    // Setup subscriber for failure topic
+    // Setup subscriber for attach topic
+    auto failureMsgCb = std::function<void(const transport::ProtoMsg &)>(
+        [this](const transport::ProtoMsg &msg)
+        {
+            // Assuming ProtoMsg has a method `Data()` returning the string payload
+            std::string receivedMessage;
+            if (!msg.SerializeToString(&receivedMessage)) {
+                gzerr << "Failure topic deserialization failed" << std::endl;
+            }
+
+            size_t pos;
+
+            // Check for "noattach" keyword
+            std::string num_noattach = findNumNextToKeyword(receivedMessage, this->no_attach_keyword);
+            std::string num_nodetach = findNumNextToKeyword(receivedMessage, this->no_detach_keyword);
+            // std::string num_clear = findNumNextToKeyword(receivedMessage, this->clear_faults_keyword);
+
+            uint8_t index = 0;
+            for (auto &handler : this->suctionHandlers) {
+                uint8_t handler_idx = index+1;
+                uint8_t fault_count = 0;
+                handler.clearFailures(); // clear all failures when message arrives
+                if (num_noattach.find(std::to_string(handler_idx)) != std::string::npos) { 
+                    handler.disableAttach(); 
+                    gzdbg << "Cup " << std::to_string(handler_idx) << " suction disabled" << std::endl;
+                    fault_count++;
+                }
+                if (num_nodetach.find(std::to_string(handler_idx)) != std::string::npos) { 
+                    handler.disableDetach(); 
+                    gzdbg << "Cup " << std::to_string(handler_idx) << " suction stuck on" << std::endl;
+                    fault_count++;
+                }
+                if (fault_count == 0) {
+                    gzdbg << "Cup " << std::to_string(handler_idx) << " faults cleared" << std::endl;
+                }
+                index++;
+            }
+        });
+
+    if (!this->node.Subscribe(this->failureTopic, failureMsgCb))
+    {
+        gzerr << "Subscriber could not be created for failure topic.\n";
+        return;
+    }
+
+    gzdbg << "SuctionPlugin subscribing to messages on "
+                 << "[" << this->failureTopic << "]" << std::endl;
     
+}
+
+std::string SuctionPlugin::findNumNextToKeyword(std::string &receivedMessage, const std::string &keyword) {
+    size_t pos = receivedMessage.find(keyword); // Find keyword
+    if (pos != std::string::npos)
+    {
+        size_t numStart = pos + keyword.length(); // Position after the keyword
+        std::string number = "0"; // To store the digits
+
+        // Extract digits starting from numStart
+        while (numStart < receivedMessage.size() && std::isdigit(receivedMessage[numStart]))
+        {
+            number += receivedMessage[numStart];
+            ++numStart; // Move to the next character
+        }
+
+        return number; // Return the extracted digits
+    }
+    return ""; // Return empty string if keyword is not found
 }
 
 //////////////////////////////////////////////////
@@ -247,98 +331,44 @@ void SuctionPlugin::PreUpdate(
     EntityComponentManager &_ecm)
 {
     GZ_PROFILE("SuctionPlugin::PreUpdate");
-    // Finish up some loading
-    // Setup potential connections
-    if (!this->validConfig){
-        std::vector<Entity> potentialEntities;
-        _ecm.Each<components::Collision>(
-                [&](const Entity &_entity, const components::Collision *) -> bool
-                {
-                    potentialEntities.push_back(_entity);
-                    return true;
-                });
 
-        // Create a list of collision entities that have been marked as contact
-        // sensors in this model. These are collisions that have a ContactSensorData
-        // component
-        auto allLinks =
-                _ecm.ChildrenByComponents(this->model.Entity(), components::Link());
-
-        for (const Entity linkEntity : allLinks)
+    // Ensure all handlers are initialized
+    if (!this->validConfig)
+    {
+        for (auto &handler : this->suctionHandlers)
         {
-            auto linkCollisions =
-                    _ecm.ChildrenByComponents(linkEntity, components::Collision());
-            for (const Entity colEntity : linkCollisions)
-            {
-                if (_ecm.EntityHasComponentType(colEntity, components::ContactSensorData::typeId))
-                {
-                    this->collisionEntities.push_back(colEntity);
-                }
-            }
-        }
-
-        // Check if the component already exists, and create or update it
-        if (!_ecm.Component<components::ExternalWorldWrenchCmd>(this->parentLinkEntity))
-        {
-            _ecm.CreateComponent(
-                    this->parentLinkEntity,
-                    components::ExternalWorldWrenchCmd());
-            gzdbg << "Creating force" << std::endl;
+            handler.Initialize(_ecm);
         }
         this->validConfig = true;
     }
 
-    // only allow attaching if child entity is detached
-    if (!this->isAttached)
-    {
-        // Only attach when requested
-        if (this->attachRequested){
-            // Only attach when models are in contact
-            if (this->touching){
-                this->attachRequested = false;
-                this->isAttached = true;
-                this->PublishJointState(this->isAttached);
-            }
+    // Update attach state for each handler. Need thgis in PreUpdate for access to _info which isnt available in a callback
+    if (this->attachRequested){ 
+        for (auto &handler : this->suctionHandlers){
+            handler.Attach(_info.simTime);
         }
     }
 
-    // Detach when detach is requested
-    if (this->isAttached)
+    // Apply force for attached handlers
+    for (auto &handler : this->suctionHandlers)
     {
-        // 
-        if (this->detachRequested)
+        if (handler.IsAttached())
         {
-            // Detach the models
-            this->detachRequested = false;
-            this->isAttached = false;
-            this->PublishJointState(this->isAttached);
+            handler.ApplyForce(_ecm, _info.simTime);
         }
     }
 
-    // If we are attached, exert a force
-    if (this->isAttached)
+    // Publish state of handlers
+    bool allAttached = true;
+    for (auto &handler : this->suctionHandlers)
     {
-        gz::msgs::Vector3d force;
-        force.set_x(this->touching_direction.x()*-this->suction_force);
-        force.set_y(this->touching_direction.y()*-this->suction_force);
-        force.set_z(this->touching_direction.z()*-this->suction_force);
-
-        // Update the force and torque if the component already exists
-        auto *wrenchCmd = _ecm.Component<components::ExternalWorldWrenchCmd>(this->parentLinkEntity);
-        if (wrenchCmd)
-        {
-            wrenchCmd->Data().mutable_force()->CopyFrom(force);
-
-            if ((std::chrono::duration_cast<std::chrono::duration<double>>(_info.simTime) - 
-                this->lastMsgTime) > this->msgGap) 
-            {
-                gzdbg << "Force vector | x: " << force.x() 
-                << " y: " << force.y()
-                << " z: " << force.z() << std::endl;
-                this->lastMsgTime = std::chrono::duration_cast<std::chrono::duration<double>>(_info.simTime);
-            }
-        }
+        if (!handler.IsAttached()) {allAttached = false;}
     }
+    if (allAttached != _allAttached) {
+        PublishJointState(allAttached);
+        _allAttached = allAttached;
+    }
+
 }
 
 //////////////////////////////////////////////////
@@ -348,10 +378,12 @@ void SuctionPlugin::PublishJointState(bool attached)
     if (attached)
     {
         detachedStateMsg.set_data("attached");
+        gzdbg << "Publishing attached" << std::endl;
     }
     else
     {
         detachedStateMsg.set_data("detached");
+        gzdbg << "Publishing detached" << std::endl;
     }
     this->outputPub.Publish(detachedStateMsg);
 }
@@ -365,53 +397,32 @@ void SuctionPlugin::PublishLegCommand(double cmd)
     this->legPub.Publish(legCommandMsg);
 }
 
-void SuctionPlugin::PostUpdate(const UpdateInfo &_info, const EntityComponentManager &_ecm)
+void SuctionPlugin::PostUpdate(
+    const UpdateInfo &_info,
+    const EntityComponentManager &_ecm)
 {
-    this->touching = false;
-
     GZ_PROFILE("SuctionPlugin::PostUpdate");
     if (_info.paused)
         return;
 
-    for (const Entity colEntity : this->collisionEntities)
+    for (auto &handler : this->suctionHandlers)
     {
-        auto *contacts = _ecm.Component<components::ContactSensorData>(colEntity);
-        if (contacts)
-        {
-            
-            // Check if the contacts include one of the target entities.
-            for (const auto &contact : contacts->Data().contact())
-            {
-                // gzerr << "Contact 1: " << contact.collision1().name() << std::endl;
-                // gzerr << "Contact 2: " << contact.collision2().name() << std::endl;
-                // bool col1Target = std::binary_search(this->targetEntities.begin(),
-                //         this->targetEntities.end(),
-                //         contact.collision1().id());
-                // bool col2Target = std::binary_search(this->targetEntities.begin(),
-                //         this->targetEntities.end(),
-                //         contact.collision2().id());
-                // if (col1Target || col2Target)
-                // {
-                this->touching = true;
-                this->touching_direction = **contact.normal().data();
-                // }
-                break;
-            }
-        }
+        handler.UpdateTouchingState(_ecm);
     }
 }
 
 //////////////////////////////////////////////////
 void SuctionPlugin::OnDetachRequest(const msgs::Empty &)
 {
-    gzerr << "Detach primed!" << std::endl;
-    this->PublishLegCommand(this->leg_retracted_pos); // publish leg position command
-    if (!this->isAttached){
-        gzdbg << "Already detached" << std::endl;
-        return;
+    for (auto &handler : this->suctionHandlers)
+    {
+        handler.Detach();
     }
-    this->detachRequested = true;
+    this->PublishLegCommand(this->leg_retracted_pos); // publish leg position command
+    this->attachRequested = false;
+    gzdbg << "All suction handlers detached." << std::endl;
 }
+
 
 GZ_ADD_PLUGIN(SuctionPlugin,
     System,
