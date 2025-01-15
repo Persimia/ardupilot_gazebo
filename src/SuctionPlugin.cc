@@ -70,6 +70,7 @@ void SuctionPlugin::Configure(const Entity &_entity,
         std::string parentLinkTag = "parent_link" + std::to_string(index);
         std::string suctionForceTag = "suction_force" + std::to_string(index);
         std::string suctionDelayTag = "suction_delay" + std::to_string(index);
+        std::string detachDelayTag = "detach_delay" + std::to_string(index);
 
         // Check if the parent_link element exists
         if (!_sdf->HasElement(parentLinkTag))
@@ -107,12 +108,21 @@ void SuctionPlugin::Configure(const Entity &_entity,
             return;
         }
 
+        // Check if the suction_force element exists
+        if (!_sdf->HasElement(detachDelayTag))
+        {
+            gzerr << "Missing <" << detachDelayTag << "> for parent link [" << parentLinkName
+                << "]. Aborting initialization.\n";
+            return;
+        }
+
         // Get the suction force value
         double suctionForce = _sdf->Get<double>(suctionForceTag);
         double suctionDelay = _sdf->Get<double>(suctionDelayTag);
+        double detachDelay = _sdf->Get<double>(detachDelayTag);
 
         // Add this handler to the list
-        this->suctionHandlers.emplace_back(parentLinkEntity, suctionForce, suctionDelay);
+        this->suctionHandlers.emplace_back(parentLinkEntity, suctionForce, suctionDelay, detachDelay);
         gzdbg << "Created SuctionHandler for link [" << parentLinkName
             << "] with force [" << suctionForce << "].\n";
 
@@ -268,6 +278,18 @@ void SuctionPlugin::Configure(const Entity &_entity,
 
             size_t pos;
 
+            // check for disattached or disdetached (TODO)
+            _disattached = (findNumNextToKeyword(receivedMessage, this->disattached_keyword).compare("0")==0);
+            _disdetached = (findNumNextToKeyword(receivedMessage, this->disdetached_keyword).compare("0")==0);
+
+            if (_disattached) {
+                gzdbg << "Attached signal disabled" << std::endl;
+            }
+            if (_disdetached) {
+                gzdbg << "Detached signal disabled" << std::endl;
+            }
+            
+
             // Check for "noattach" keyword
             std::string num_noattach = findNumNextToKeyword(receivedMessage, this->no_attach_keyword);
             std::string num_nodetach = findNumNextToKeyword(receivedMessage, this->no_detach_keyword);
@@ -362,7 +384,7 @@ void SuctionPlugin::PreUpdate(
     bool allAttached = true;
     for (auto &handler : this->suctionHandlers)
     {
-        if (!handler.IsAttached()) {allAttached = false;}
+        if (!handler.HasSuction()) {allAttached = false;}
     }
     if (allAttached != _allAttached) {
         PublishJointState(allAttached);
@@ -375,15 +397,20 @@ void SuctionPlugin::PreUpdate(
 void SuctionPlugin::PublishJointState(bool attached)
 {
     msgs::StringMsg detachedStateMsg;
-    if (attached)
+    if (attached && !_disattached)
     {
         detachedStateMsg.set_data("attached");
         gzdbg << "Publishing attached" << std::endl;
     }
-    else
+    else if (!attached && !_disdetached) 
     {
         detachedStateMsg.set_data("detached");
         gzdbg << "Publishing detached" << std::endl;
+    }
+    else
+    {
+        gzdbg << "Publishing disabled for " << (attached ? "attached" : "detached") << std::endl;
+        return;
     }
     this->outputPub.Publish(detachedStateMsg);
 }
@@ -414,12 +441,12 @@ void SuctionPlugin::PostUpdate(
 //////////////////////////////////////////////////
 void SuctionPlugin::OnDetachRequest(const msgs::Empty &)
 {
+    this->attachRequested = false;
     for (auto &handler : this->suctionHandlers)
     {
         handler.Detach();
     }
     this->PublishLegCommand(this->leg_retracted_pos); // publish leg position command
-    this->attachRequested = false;
     gzdbg << "All suction handlers detached." << std::endl;
 }
 

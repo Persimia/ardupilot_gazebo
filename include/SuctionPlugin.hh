@@ -1,4 +1,9 @@
 /*
+cd /home/skemp32/ros2_ws/src/ardupilot_gazebo/build
+cmake .. -DCMAKE_BUILD_TYPE=RelWithDebInfo
+make -j4
+*/
+/*
  * Copyright (C) 2019 Open Source Robotics Foundation
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -73,9 +78,9 @@ namespace systems
 class SuctionHandler
 {
 public:
-    SuctionHandler(Entity _parentLink, double _suctionForce, double _suctionDelay)
-        : parentLink(_parentLink), suctionForce(_suctionForce), suctionDelay(_suctionDelay),
-          isAttached(false), isTouching(false), contactStartTime(0), msgPeriod_s(INFINITY), lastMsgTime(0),
+    SuctionHandler(Entity _parentLink, double _suctionForce, double _suctionDelay, double _detachDelay)
+        : parentLink(_parentLink), suctionForce(_suctionForce), suctionDelay(_suctionDelay), detachDelay(_detachDelay), hasSuction(false),
+          isAttached(false), detachRequested(false), isTouching(false), contactStartTime(0), detachRequestTime(0), msgPeriod_s(INFINITY), lastMsgTime(0),
           noAttach(false), noDetach(false) {}
 
     void Initialize(EntityComponentManager &_ecm)
@@ -138,22 +143,46 @@ public:
     {
         if (this->isAttached)
         {
-            this->isAttached = false;
-            gzdbg << "Detach successful." << std::endl;
+            gzdbg << "Detach started" << std::endl;
+            this->detachRequested = true;
+            // auto future = std::async(std::launch::async, [this]() {
+            //     while _info.simTime
+            //     std::this_thread::sleep_for(std::chrono::milliseconds(static_cast<int>(this->detachDelay * 1000)));
+            //     this->isAttached = false;
+            //     gzdbg << "Detach successful after delay of " << this->detachDelay << " seconds." << std::endl;
+            // });
         }
     }
 
     void ApplyForce(EntityComponentManager &_ecm, const std::chrono::duration<double> &simTime)
     {
-        if ((
+        this->hasSuction = false;
+        if (this->detachRequested) {
+            if ((simTime - this->detachRequestTime).count() > this->detachDelay) {
+                this->isAttached = false;
+                this->detachRequested = false;
+            }
+            else if ((simTime - this->contactStartTime).count() <= this->suctionDelay || !this->isTouching) { //skip delay if already off blade or attach hasn't started yet
+                this->isAttached = false;
+                this->detachRequested = false;
+            }
+        } else {
+            this->detachRequestTime = simTime;
+        }
+        if (
+            (
                 this->isAttached 
                 && (simTime - this->contactStartTime).count() > this->suctionDelay
                 && !(this->noAttach)
-            )||(
+                // && this->isTouching
+            )
+            ||
+            (
                 this->isTouching && this->noDetach
             )
         )
         {
+            this->hasSuction = true;
             auto *wrenchCmd = _ecm.Component<components::ExternalWorldWrenchCmd>(this->parentLink);
             if (wrenchCmd)
             {
@@ -175,6 +204,7 @@ public:
     }
 
     bool IsAttached() const { return this->isAttached; }
+    bool HasSuction() const { return this->hasSuction; }
     bool IsTouching() const { return this->isTouching; }
     void disableAttach() { this->noAttach = true; }
     void disableDetach() { this->noDetach = true; }
@@ -187,12 +217,16 @@ private:
     Entity parentLink;
     double suctionForce;
     double suctionDelay;
+    double detachDelay;
     bool isAttached;
+    bool hasSuction;
+    bool detachRequested;
     bool isTouching;
     bool noAttach;
     bool noDetach;
     gz::msgs::Vector3d  touchingDirection;
     std::chrono::duration<double> contactStartTime;
+    std::chrono::duration<double> detachRequestTime;
     std::chrono::duration<double> lastMsgTime;
     double msgPeriod_s;
     std::vector<Entity> collisionEntities;
@@ -276,10 +310,17 @@ private:
 
     private: std::vector<SuctionHandler>suctionHandlers;
 
-    private: bool _allAttached;
+    private: bool _allAttached{false};
+
+    private: bool _disattached{false};
+
+    private: bool _disdetached{false};
 
     const std::string no_attach_keyword = "noattach";
     const std::string no_detach_keyword = "nodetach";
+    const std::string disattached_keyword = "disattached";
+    const std::string disdetached_keyword = "disdetached";
+    
     // const std::string clear_faults_keyword = "clear";
     };
   }
